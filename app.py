@@ -11,9 +11,6 @@ import torch
 # =======================================================================
 # CORREÇÃO DE COMPATIBILIDADE PARA PYTORCH 2.6+
 # =======================================================================
-# O PyTorch 2.6 mudou o padrão de segurança do torch.load para weights_only=True.
-# O modelo XTTS-v2 precisa do comportamento antigo para carregar suas configurações.
-# Este 'patch' força o weights_only=False em todos os carregamentos.
 _original_load = torch.load
 def _patched_load(*args, **kwargs):
     kwargs['weights_only'] = False
@@ -35,8 +32,8 @@ print("Carregando o modelo XTTS-v2... Isso pode demorar um pouco.")
 # Instancia o modelo XTTS-v2 e envia para a GPU
 tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
 
-# Extrai dinamicamente a lista de vozes padrão disponíveis dentro do modelo
-vozes_padrao = list(tts.synthesizer.tts_model.speaker_manager.name_to_id.keys())
+# Extrai dinamicamente a lista de vozes padrão (USANDO A SUA LÓGICA ORIGINAL)
+vozes_padrao = list(tts.synthesizer.tts_model.speaker_manager.name_to_id)
 print("Modelo carregado com sucesso!")
 
 def gerar_audio(modo, arquivo_clone, voz_selecionada, texto, temperatura, velocidade, top_p):
