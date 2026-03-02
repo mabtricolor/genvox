@@ -1,6 +1,6 @@
 import os
 
-# 1. Corrige o erro do Matplotlib no Colab (ANTES de qualquer outra importação)
+# 1. Corrige o erro do Matplotlib no Colab
 os.environ['MPLBACKEND'] = 'Agg'
 
 # 2. Aceita automaticamente os termos de uso do modelo XTTS-v2
@@ -21,156 +21,167 @@ torch.load = _patched_load
 import tempfile
 import uuid
 import re
-import gradio as gr
+import streamlit as st
 from TTS.api import TTS
 from pydub import AudioSegment
 from pydub.effects import normalize
 
-print("Inicializando o ambiente...")
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Dispositivo selecionado: {device}")
-
-print("Carregando o modelo XTTS-v2... Isso pode demorar um pouco.")
-tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
-
-# Extrai a lista de vozes do modelo (lógica original)
-vozes_padrao = list(tts.synthesizer.tts_model.speaker_manager.name_to_id)
-print("Modelo carregado com sucesso!")
+# =======================================================================
+# CONFIGURAÇÃO DA PÁGINA STREAMLIT
+# =======================================================================
+st.set_page_config(page_title="GenVox - Studio", page_icon="🎙️", layout="centered")
 
 # =======================================================================
-# FUNÇÕES DE PROCESSAMENTO DE TEXTO E ÁUDIO (SUA LÓGICA DE VOLTA)
+# CACHE DO MODELO (Evita recarregar 1.8GB a cada clique)
 # =======================================================================
+@st.cache_resource(show_spinner="Carregando o motor XTTS-v2 (Isso só acontece na primeira vez)...")
+def load_model():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+    vozes = list(tts.synthesizer.tts_model.speaker_manager.name_to_id)
+    return tts, vozes
 
+# Carrega o modelo de fato
+tts, vozes_padrao = load_model()
+
+# =======================================================================
+# FUNÇÕES DE PROCESSAMENTO
+# =======================================================================
 def limpar_texto_para_ia(texto):
     texto = texto.strip()
     texto = texto.replace("...", ",")
-    # Remove espaços duplos bizarros
     texto = re.sub(r'\s+', ' ', texto)
-    # Remove o ponto final na última palavra para a IA não ler "ponto"
     if texto.endswith("."):
         texto = texto[:-1]
     return texto
 
 def fatiar_texto(texto):
-    # Substitui o NLTK: Divide o texto onde houver ponto, exclamação ou interrogação, seguido de espaço
     frases = re.split(r'(?<=[.!?])\s+', texto)
     return [f.strip() for f in frases if f.strip()]
 
-def gerar_audio(modo, arquivo_clone, voz_selecionada, texto, temperatura, velocidade, top_p):
-    if not texto or not texto.strip():
-        raise gr.Error("O texto não pode estar vazio. Por favor, digite um roteiro.")
-
-    # Parâmetros - AVISO: split_sentences=False para não deixar a IA processar o texto!
-    params = {
-        "language": "pt",
-        "temperature": float(temperatura),
-        "speed": float(velocidade),
-        "top_p": float(top_p),
-        "split_sentences": False 
-    }
-
-    if modo == "Clonar Voz":
-        if not arquivo_clone: raise gr.Error("Por favor, faça o upload de um áudio de referência.")
-        params["speaker_wav"] = arquivo_clone
-    else:
-        if not voz_selecionada: raise gr.Error("Por favor, selecione uma voz padrão.")
-        params["speaker"] = voz_selecionada
-
-    temp_dir = tempfile.gettempdir()
-    
-    # 1. Fatia o texto
-    chunks = fatiar_texto(texto)
-    arquivos_de_audio_gerados = []
-    
-    print(f"Texto dividido inteligentemente em {len(chunks)} frases. Gerando...")
-
-    # 2. Gera os áudios separadamente (igual ao seu código desktop)
-    for i, chunk in enumerate(chunks):
-        chunk_final = limpar_texto_para_ia(chunk)
-        if not chunk_final: continue
-        
-        print(f"Gerando parte {i+1}/{len(chunks)}...")
-        temp_name = f"genvox_part_{uuid.uuid4()}.wav"
-        temp_path = os.path.join(temp_dir, temp_name)
-        
-        try:
-            tts.tts_to_file(text=chunk_final, file_path=temp_path, **params)
-            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                arquivos_de_audio_gerados.append(temp_path)
-        except Exception as e:
-            print(f"Erro na geração da parte {i+1}: {e}")
-
-    # 3. Junta tudo com Pydub, aplica crossfade e filtros
-    print("Juntando áudios e aplicando filtros de estúdio...")
-    audio_final = AudioSegment.empty()
-    crossfade_duration = 50
-    
-    for i, arquivo in enumerate(arquivos_de_audio_gerados):
-        try:
-            segmento = AudioSegment.from_wav(arquivo)
-            if i == 0: 
-                audio_final = segmento
-            else: 
-                audio_final = audio_final.append(segmento, crossfade=crossfade_duration)
-        except Exception as e:
-            print(f"Erro ao unir arquivo {arquivo}: {e}")
-
-    # Seu tratamento de áudio original
-    audio_final = audio_final.high_pass_filter(180)
-    audio_final = normalize(audio_final, headroom=3.0)
-
-    # 4. Salva o resultado
-    caminho_saida_wav = os.path.join(temp_dir, "genvox_saida_tratada.wav")
-    audio_final.export(caminho_saida_wav, format="wav")
-
-    # 5. Limpa os pedaços temporários
-    for arquivo in arquivos_de_audio_gerados:
-        try: os.remove(arquivo)
-        except: pass
-
-    print("Áudio finalizado com perfeição!")
-    return caminho_saida_wav
-
 # =======================================================================
-# CONFIGURAÇÃO DO FRONT-END (INTERFACE GRADIO)
+# FRONT-END STREAMLIT
 # =======================================================================
+st.title("🎙️ GenVox - Studio")
+st.markdown("Bem-vindo ao GenVox. Escolha o modo de operação, configure a voz, insira seu texto e gere o áudio!")
 
-def atualizar_interface(modo):
-    if modo == "Clonar Voz":
-        return gr.update(visible=True), gr.update(visible=False)
+st.divider()
+
+# 1. Modo de Geração
+st.subheader("1. Modo de Geração")
+modo = st.radio("Escolha como deseja gerar a voz:", ["Clonar Voz", "Usar Voz Padrão"], horizontal=True)
+
+arquivo_clone = None
+voz_selecionada = None
+
+# Interface Dinâmica (O Streamlit esconde os campos nativamente com o "if")
+if modo == "Clonar Voz":
+    arquivo_clone = st.file_uploader("Upload de Áudio de Referência (Formato WAV)", type=["wav", "mp3", "ogg"])
+else:
+    voz_selecionada = st.selectbox("Selecione a Voz Padrão do Modelo", vozes_padrao)
+
+st.divider()
+
+# 2. Roteiro
+st.subheader("2. Roteiro")
+texto = st.text_area("Escreva o que a voz deverá falar aqui...", height=150)
+
+# 3. Ajustes Finos
+with st.expander("3. Ajustes Finos ⚙️"):
+    temperatura = st.slider("Temperatura (Aleatoriedade)", 0.0, 1.0, 0.75, 0.01)
+    velocidade = st.slider("Velocidade", 0.5, 2.0, 1.0, 0.01)
+    top_p = st.slider("Top-P (Fidelidade)", 0.1, 1.0, 0.95, 0.01)
+
+st.divider()
+
+# Botão de Geração
+if st.button("🚀 GERAR ÁUDIO", type="primary", use_container_width=True):
+    
+    # Validações antes de começar
+    if not texto.strip():
+        st.error("⚠️ O texto não pode estar vazio. Por favor, digite um roteiro.")
+    elif modo == "Clonar Voz" and arquivo_clone is None:
+        st.error("⚠️ Por favor, faça o upload de um arquivo de áudio de referência.")
+    elif modo == "Usar Voz Padrão" and not voz_selecionada:
+        st.error("⚠️ Por favor, selecione uma voz padrão na lista.")
     else:
-        return gr.update(visible=False), gr.update(visible=True)
-
-with gr.Blocks(title="GenVox", theme=gr.themes.Soft()) as interface:
-    gr.Markdown("# 🎙️ GenVox - Studio")
-    gr.Markdown("Bem-vindo ao GenVox. A inteligência artificial foi ajustada para locução natural.")
-
-    with gr.Row():
-        with gr.Column(scale=1):
-            radio_modo = gr.Radio(choices=["Clonar Voz", "Usar Voz Padrão"], value="Clonar Voz", label="1. Modo de Geração")
-            input_audio_clone = gr.Audio(type="filepath", label="Upload de Áudio de Referência (Clonagem)", visible=True)
-            dropdown_voz_padrao = gr.Dropdown(choices=vozes_padrao, label="Selecione a Voz Padrão", visible=False)
+        # Tudo certo, vamos processar!
+        with st.spinner("Processando áudio com a GPU..."):
+            temp_dir = tempfile.gettempdir()
             
-            radio_modo.change(fn=atualizar_interface, inputs=radio_modo, outputs=[input_audio_clone, dropdown_voz_padrao])
+            # Se for clone, salva o arquivo enviado na memória do Colab temporariamente
+            caminho_audio_clone = None
+            if arquivo_clone is not None:
+                caminho_audio_clone = os.path.join(temp_dir, f"clone_ref_{uuid.uuid4()}.wav")
+                with open(caminho_audio_clone, "wb") as f:
+                    f.write(arquivo_clone.getbuffer())
 
-            input_texto = gr.Textbox(label="2. Roteiro", placeholder="Escreva o texto...", lines=5)
+            params = {
+                "language": "pt",
+                "temperature": float(temperatura),
+                "speed": float(velocidade),
+                "top_p": float(top_p),
+                "split_sentences": False 
+            }
 
-            with gr.Accordion("3. Ajustes Finos", open=False):
-                slider_temp = gr.Slider(minimum=0.0, maximum=1.0, value=0.75, step=0.01, label="Temperatura")
-                slider_vel = gr.Slider(minimum=0.5, maximum=2.0, value=1.0, step=0.01, label="Velocidade")
-                slider_topp = gr.Slider(minimum=0.1, maximum=1.0, value=0.95, step=0.01, label="Top-P")
+            if modo == "Clonar Voz":
+                params["speaker_wav"] = caminho_audio_clone
+            else:
+                params["speaker"] = voz_selecionada
 
-            btn_gerar = gr.Button("🚀 GERAR ÁUDIO", variant="primary")
+            # Inicia o fatiamento e geração
+            chunks = fatiar_texto(texto)
+            arquivos_de_audio_gerados = []
+            
+            # Barra de progresso visual do Streamlit
+            barra_progresso = st.progress(0)
+            
+            for i, chunk in enumerate(chunks):
+                chunk_final = limpar_texto_para_ia(chunk)
+                if not chunk_final: continue
+                
+                temp_name = f"genvox_part_{uuid.uuid4()}.wav"
+                temp_path = os.path.join(temp_dir, temp_name)
+                
+                try:
+                    tts.tts_to_file(text=chunk_final, file_path=temp_path, **params)
+                    if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                        arquivos_de_audio_gerados.append(temp_path)
+                except Exception as e:
+                    st.error(f"Erro na parte {i+1}: {e}")
+                
+                # Atualiza a barra
+                barra_progresso.progress((i + 1) / len(chunks))
 
-        with gr.Column(scale=1):
-            saida_audio = gr.Audio(label="Resultado da Geração", interactive=False)
+            # União dos áudios
+            audio_final = AudioSegment.empty()
+            crossfade_duration = 50
+            
+            for i, arquivo in enumerate(arquivos_de_audio_gerados):
+                try:
+                    segmento = AudioSegment.from_wav(arquivo)
+                    if i == 0: 
+                        audio_final = segmento
+                    else: 
+                        audio_final = audio_final.append(segmento, crossfade=crossfade_duration)
+                except Exception as e:
+                    pass
 
-    btn_gerar.click(
-        fn=gerar_audio,
-        inputs=[radio_modo, input_audio_clone, dropdown_voz_padrao, input_texto, slider_temp, slider_vel, slider_topp],
-        outputs=saida_audio
-    )
+            audio_final = audio_final.high_pass_filter(180)
+            audio_final = normalize(audio_final, headroom=3.0)
 
-if __name__ == "__main__":
-    interface.launch(share=True, debug=True)
+            caminho_saida_wav = os.path.join(temp_dir, "genvox_saida_stream.wav")
+            audio_final.export(caminho_saida_wav, format="wav")
+
+            # Faxina
+            for arquivo in arquivos_de_audio_gerados:
+                try: os.remove(arquivo)
+                except: pass
+            if caminho_audio_clone:
+                try: os.remove(caminho_audio_clone)
+                except: pass
+
+            st.success("✅ Áudio gerado com perfeição!")
+            
+            # Toca o áudio na tela e já embute o botão nativo de baixar!
+            st.audio(caminho_saida_wav, format="audio/wav")
