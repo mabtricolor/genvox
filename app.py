@@ -74,7 +74,7 @@ modo = st.radio("Escolha como deseja gerar a voz:", ["Clonar Voz", "Usar Voz Pad
 arquivo_clone = None
 voz_selecionada = None
 
-# Interface Dinâmica (O Streamlit esconde os campos nativamente com o "if")
+# Interface Dinâmica
 if modo == "Clonar Voz":
     arquivo_clone = st.file_uploader("Upload de Áudio de Referência (Formato WAV)", type=["wav", "mp3", "ogg"])
 else:
@@ -167,11 +167,20 @@ if st.button("🚀 GERAR ÁUDIO", type="primary", use_container_width=True):
                 except Exception as e:
                     pass
 
-            audio_final = audio_final.high_pass_filter(180)
-            audio_final = normalize(audio_final, headroom=3.0)
+            # ==========================================
+            # ESCUDO DE SEGURANÇA CONTRA QUEBRA DE TELA
+            # ==========================================
+            if len(audio_final) > 0:
+                audio_final = audio_final.high_pass_filter(180)
+                audio_final = normalize(audio_final, headroom=3.0)
 
-            caminho_saida_wav = os.path.join(temp_dir, "genvox_saida_stream.wav")
-            audio_final.export(caminho_saida_wav, format="wav")
+                caminho_saida_wav = os.path.join(temp_dir, "genvox_saida_stream.wav")
+                audio_final.export(caminho_saida_wav, format="wav")
+
+                st.success("✅ Áudio gerado com perfeição!")
+                st.audio(caminho_saida_wav, format="audio/wav")
+            else:
+                st.error("🚨 Falha ao clonar voz: Verifique se o áudio enviado tem uma voz humana clara.")
 
             # Faxina
             for arquivo in arquivos_de_audio_gerados:
@@ -180,8 +189,3 @@ if st.button("🚀 GERAR ÁUDIO", type="primary", use_container_width=True):
             if caminho_audio_clone:
                 try: os.remove(caminho_audio_clone)
                 except: pass
-
-            st.success("✅ Áudio gerado com perfeição!")
-            
-            # Toca o áudio na tela e já embute o botão nativo de baixar!
-            st.audio(caminho_saida_wav, format="audio/wav")
