@@ -1,7 +1,6 @@
 TTS==0.22.0
-gradio==4.44.1
+streamlit==1.35.0
 numpy<2.0.0
 transformers==4.38.2
 tokenizers==0.15.2
-pydantic==2.10.6
 torchcodec
