@@ -1,5 +1,5 @@
 TTS==0.22.0
 gradio==4.36.1
 numpy<2.0.0
-huggingface-hub==0.25.2
+huggingface-hub==0.22.2
 transformers==4.38.2
