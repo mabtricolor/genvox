@@ -19,145 +19,158 @@ torch.load = _patched_load
 # =======================================================================
 
 import tempfile
+import uuid
+import re
 import gradio as gr
 from TTS.api import TTS
+from pydub import AudioSegment
+from pydub.effects import normalize
 
 print("Inicializando o ambiente...")
 
-# Verifica se a GPU está disponível. No Colab, isso deve ser "cuda".
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Dispositivo selecionado: {device}")
 
 print("Carregando o modelo XTTS-v2... Isso pode demorar um pouco.")
-# Instancia o modelo XTTS-v2 e envia para a GPU
 tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
 
-# Extrai dinamicamente a lista de vozes padrão (USANDO A SUA LÓGICA ORIGINAL)
+# Extrai a lista de vozes do modelo (lógica original)
 vozes_padrao = list(tts.synthesizer.tts_model.speaker_manager.name_to_id)
 print("Modelo carregado com sucesso!")
 
+# =======================================================================
+# FUNÇÕES DE PROCESSAMENTO DE TEXTO E ÁUDIO (SUA LÓGICA DE VOLTA)
+# =======================================================================
+
+def limpar_texto_para_ia(texto):
+    texto = texto.strip()
+    texto = texto.replace("...", ",")
+    # Remove espaços duplos bizarros
+    texto = re.sub(r'\s+', ' ', texto)
+    # Remove o ponto final na última palavra para a IA não ler "ponto"
+    if texto.endswith("."):
+        texto = texto[:-1]
+    return texto
+
+def fatiar_texto(texto):
+    # Substitui o NLTK: Divide o texto onde houver ponto, exclamação ou interrogação, seguido de espaço
+    frases = re.split(r'(?<=[.!?])\s+', texto)
+    return [f.strip() for f in frases if f.strip()]
+
 def gerar_audio(modo, arquivo_clone, voz_selecionada, texto, temperatura, velocidade, top_p):
-    """
-    Função principal que o Gradio chamará ao clicar em 'GERAR ÁUDIO'.
-    """
     if not texto or not texto.strip():
         raise gr.Error("O texto não pode estar vazio. Por favor, digite um roteiro.")
 
-    # Parâmetros básicos de geração
+    # Parâmetros - AVISO: split_sentences=False para não deixar a IA processar o texto!
     params = {
-        "text": texto,
         "language": "pt",
         "temperature": float(temperatura),
         "speed": float(velocidade),
-        "top_p": float(top_p)
+        "top_p": float(top_p),
+        "split_sentences": False 
     }
 
-    # Configura os parâmetros dependendo do modo selecionado
     if modo == "Clonar Voz":
-        if not arquivo_clone:
-            raise gr.Error("Por favor, faça o upload de um arquivo de áudio de referência para clonar a voz.")
+        if not arquivo_clone: raise gr.Error("Por favor, faça o upload de um áudio de referência.")
         params["speaker_wav"] = arquivo_clone
     else:
-        if not voz_selecionada:
-            raise gr.Error("Por favor, selecione uma voz padrão do modelo na lista.")
+        if not voz_selecionada: raise gr.Error("Por favor, selecione uma voz padrão.")
         params["speaker"] = voz_selecionada
 
-    # Cria um diretório temporário para salvar o áudio final gerado
     temp_dir = tempfile.gettempdir()
-    caminho_saida = os.path.join(temp_dir, "genvox_saida.wav")
+    
+    # 1. Fatia o texto
+    chunks = fatiar_texto(texto)
+    arquivos_de_audio_gerados = []
+    
+    print(f"Texto dividido inteligentemente em {len(chunks)} frases. Gerando...")
 
-    print(f"Iniciando a geração de áudio no modo: {modo}...")
+    # 2. Gera os áudios separadamente (igual ao seu código desktop)
+    for i, chunk in enumerate(chunks):
+        chunk_final = limpar_texto_para_ia(chunk)
+        if not chunk_final: continue
+        
+        print(f"Gerando parte {i+1}/{len(chunks)}...")
+        temp_name = f"genvox_part_{uuid.uuid4()}.wav"
+        temp_path = os.path.join(temp_dir, temp_name)
+        
+        try:
+            tts.tts_to_file(text=chunk_final, file_path=temp_path, **params)
+            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                arquivos_de_audio_gerados.append(temp_path)
+        except Exception as e:
+            print(f"Erro na geração da parte {i+1}: {e}")
+
+    # 3. Junta tudo com Pydub, aplica crossfade e filtros
+    print("Juntando áudios e aplicando filtros de estúdio...")
+    audio_final = AudioSegment.empty()
+    crossfade_duration = 50
     
-    # Chama o motor para gerar o arquivo de áudio
-    tts.tts_to_file(file_path=caminho_saida, **params)
-    
-    print("Geração concluída!")
-    return caminho_saida
+    for i, arquivo in enumerate(arquivos_de_audio_gerados):
+        try:
+            segmento = AudioSegment.from_wav(arquivo)
+            if i == 0: 
+                audio_final = segmento
+            else: 
+                audio_final = audio_final.append(segmento, crossfade=crossfade_duration)
+        except Exception as e:
+            print(f"Erro ao unir arquivo {arquivo}: {e}")
+
+    # Seu tratamento de áudio original
+    audio_final = audio_final.high_pass_filter(180)
+    audio_final = normalize(audio_final, headroom=3.0)
+
+    # 4. Salva o resultado
+    caminho_saida_wav = os.path.join(temp_dir, "genvox_saida_tratada.wav")
+    audio_final.export(caminho_saida_wav, format="wav")
+
+    # 5. Limpa os pedaços temporários
+    for arquivo in arquivos_de_audio_gerados:
+        try: os.remove(arquivo)
+        except: pass
+
+    print("Áudio finalizado com perfeição!")
+    return caminho_saida_wav
 
 # =======================================================================
 # CONFIGURAÇÃO DO FRONT-END (INTERFACE GRADIO)
 # =======================================================================
 
 def atualizar_interface(modo):
-    """
-    Controla a visibilidade: Se for "Clonar Voz", mostra o upload de áudio e esconde a lista.
-    Se for "Usar Voz Padrão", esconde o upload e mostra a lista.
-    """
     if modo == "Clonar Voz":
         return gr.update(visible=True), gr.update(visible=False)
     else:
         return gr.update(visible=False), gr.update(visible=True)
 
-# Cria a estrutura visual da nossa aplicação
 with gr.Blocks(title="GenVox", theme=gr.themes.Soft()) as interface:
     gr.Markdown("# 🎙️ GenVox - Studio")
-    gr.Markdown("Bem-vindo ao GenVox. Escolha o modo de operação, configure a voz, insira seu texto e gere o áudio!")
+    gr.Markdown("Bem-vindo ao GenVox. A inteligência artificial foi ajustada para locução natural.")
 
     with gr.Row():
-        # Coluna da Esquerda (Configurações e Entrada)
         with gr.Column(scale=1):
+            radio_modo = gr.Radio(choices=["Clonar Voz", "Usar Voz Padrão"], value="Clonar Voz", label="1. Modo de Geração")
+            input_audio_clone = gr.Audio(type="filepath", label="Upload de Áudio de Referência (Clonagem)", visible=True)
+            dropdown_voz_padrao = gr.Dropdown(choices=vozes_padrao, label="Selecione a Voz Padrão", visible=False)
             
-            # 1. Modo de Operação
-            radio_modo = gr.Radio(
-                choices=["Clonar Voz", "Usar Voz Padrão"], 
-                value="Clonar Voz", 
-                label="1. Modo de Geração"
-            )
+            radio_modo.change(fn=atualizar_interface, inputs=radio_modo, outputs=[input_audio_clone, dropdown_voz_padrao])
 
-            # Elementos Dinâmicos de Voz
-            input_audio_clone = gr.Audio(
-                type="filepath", 
-                label="Upload de Áudio de Referência (Clonagem)",
-                visible=True
-            )
-            dropdown_voz_padrao = gr.Dropdown(
-                choices=vozes_padrao, 
-                label="Selecione a Voz Padrão", 
-                visible=False
-            )
+            input_texto = gr.Textbox(label="2. Roteiro", placeholder="Escreva o texto...", lines=5)
 
-            # Liga o Radio Button à função que atualiza a visibilidade da tela
-            radio_modo.change(
-                fn=atualizar_interface, 
-                inputs=radio_modo, 
-                outputs=[input_audio_clone, dropdown_voz_padrao]
-            )
-
-            # 2. Texto
-            input_texto = gr.Textbox(
-                label="2. Roteiro", 
-                placeholder="Escreva o que a voz deverá falar aqui...", 
-                lines=5
-            )
-
-            # 3. Ajustes Finos
             with gr.Accordion("3. Ajustes Finos", open=False):
-                slider_temp = gr.Slider(minimum=0.0, maximum=1.0, value=0.75, step=0.01, label="Temperatura (Aleatoriedade)")
+                slider_temp = gr.Slider(minimum=0.0, maximum=1.0, value=0.75, step=0.01, label="Temperatura")
                 slider_vel = gr.Slider(minimum=0.5, maximum=2.0, value=1.0, step=0.01, label="Velocidade")
-                slider_topp = gr.Slider(minimum=0.1, maximum=1.0, value=0.95, step=0.01, label="Top-P (Fidelidade)")
+                slider_topp = gr.Slider(minimum=0.1, maximum=1.0, value=0.95, step=0.01, label="Top-P")
 
-            # Botão de Gerar
             btn_gerar = gr.Button("🚀 GERAR ÁUDIO", variant="primary")
 
-        # Coluna da Direita (Saída de Áudio)
         with gr.Column(scale=1):
             saida_audio = gr.Audio(label="Resultado da Geração", interactive=False)
 
-    # Conecta o clique do botão à função principal
     btn_gerar.click(
         fn=gerar_audio,
-        inputs=[
-            radio_modo, 
-            input_audio_clone, 
-            dropdown_voz_padrao, 
-            input_texto, 
-            slider_temp, 
-            slider_vel, 
-            slider_topp
-        ],
+        inputs=[radio_modo, input_audio_clone, dropdown_voz_padrao, input_texto, slider_temp, slider_vel, slider_topp],
         outputs=saida_audio
     )
 
 if __name__ == "__main__":
-    # Inicia a aplicação com share=True para criar um link público acessível pela web
     interface.launch(share=True, debug=True)
