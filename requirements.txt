@@ -1,6 +1,5 @@
 TTS==0.22.0
-gradio==4.36.1
+gradio==4.44.1
 numpy<2.0.0
-huggingface-hub==0.22.2
 transformers==4.38.2
 tokenizers==0.15.2
