@@ -1,13 +1,9 @@
 import os
 
-# =======================================================================
-# CONFIGURAÇÃO DE AMBIENTE E BACK-END
-# =======================================================================
-
-# 1. Corrige o erro do Matplotlib no Colab (força o uso de um backend sem interface gráfica)
+# 1. Corrige o erro do Matplotlib no Colab (ANTES de qualquer outra importação)
 os.environ['MPLBACKEND'] = 'Agg'
 
-# 2. Aceita automaticamente os termos de uso do modelo XTTS-v2 (Obrigatório pela Coqui)
+# 2. Aceita automaticamente os termos de uso do modelo XTTS-v2
 os.environ["COQUI_TOS_AGREED"] = "1"
 
 import tempfile
