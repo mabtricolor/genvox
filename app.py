@@ -1,15 +1,19 @@
 import os
+
+# =======================================================================
+# CONFIGURAÇÃO DE AMBIENTE E BACK-END
+# =======================================================================
+
+# 1. Corrige o erro do Matplotlib no Colab (força o uso de um backend sem interface gráfica)
+os.environ['MPLBACKEND'] = 'Agg'
+
+# 2. Aceita automaticamente os termos de uso do modelo XTTS-v2 (Obrigatório pela Coqui)
+os.environ["COQUI_TOS_AGREED"] = "1"
+
 import tempfile
 import torch
 import gradio as gr
 from TTS.api import TTS
-
-# =======================================================================
-# CONFIGURAÇÃO DO BACK-END (MOTOR DE IA)
-# =======================================================================
-
-# Aceita automaticamente os termos de uso do modelo XTTS-v2 (Obrigatório pela Coqui)
-os.environ["COQUI_TOS_AGREED"] = "1"
 
 print("Inicializando o ambiente...")
 
@@ -35,7 +39,7 @@ def gerar_audio(modo, arquivo_clone, voz_selecionada, texto, temperatura, veloci
     # Parâmetros básicos de geração
     params = {
         "text": texto,
-        "language": "pt", # Fixo em português, conforme seu código original
+        "language": "pt",
         "temperature": float(temperatura),
         "speed": float(velocidade),
         "top_p": float(top_p)
