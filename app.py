@@ -6,8 +6,22 @@ os.environ['MPLBACKEND'] = 'Agg'
 # 2. Aceita automaticamente os termos de uso do modelo XTTS-v2
 os.environ["COQUI_TOS_AGREED"] = "1"
 
-import tempfile
 import torch
+
+# =======================================================================
+# CORREÇÃO DE COMPATIBILIDADE PARA PYTORCH 2.6+
+# =======================================================================
+# O PyTorch 2.6 mudou o padrão de segurança do torch.load para weights_only=True.
+# O modelo XTTS-v2 precisa do comportamento antigo para carregar suas configurações.
+# Este 'patch' força o weights_only=False em todos os carregamentos.
+_original_load = torch.load
+def _patched_load(*args, **kwargs):
+    kwargs['weights_only'] = False
+    return _original_load(*args, **kwargs)
+torch.load = _patched_load
+# =======================================================================
+
+import tempfile
 import gradio as gr
 from TTS.api import TTS
 
@@ -17,7 +31,7 @@ print("Inicializando o ambiente...")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Dispositivo selecionado: {device}")
 
-print("Carregando o modelo XTTS-v2... Isso pode demorar um pouco na primeira execução.")
+print("Carregando o modelo XTTS-v2... Isso pode demorar um pouco.")
 # Instancia o modelo XTTS-v2 e envia para a GPU
 tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
 
