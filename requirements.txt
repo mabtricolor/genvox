@@ -1,4 +1,4 @@
 f5-tts
-streamlit==1.35.0
+gradio==4.44.1
 soundfile
 pydub
