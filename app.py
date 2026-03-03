@@ -2,86 +2,116 @@ import os
 import tempfile
 import uuid
 import soundfile as sf
-import streamlit as st
+import gradio as gr
 from pydub import AudioSegment
 from pydub.effects import normalize
+
+# 1. Corrige o erro do Matplotlib no Colab
+os.environ['MPLBACKEND'] = 'Agg'
+
+import torch
+
+# =======================================================================
+# CORREÇÃO DE COMPATIBILIDADE PARA PYTORCH 2.6+
+# =======================================================================
+_original_load = torch.load
+def _patched_load(*args, **kwargs):
+    kwargs['weights_only'] = False
+    return _original_load(*args, **kwargs)
+torch.load = _patched_load
+# =======================================================================
 
 # Importa a poderosa API do F5-TTS
 from f5_tts.api import F5TTS
 
-# =======================================================================
-# CONFIGURAÇÃO DA PÁGINA STREAMLIT
-# =======================================================================
-st.set_page_config(page_title="GenVox - F5 Studio", page_icon="🎙️", layout="centered")
+print("Inicializando o ambiente...")
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Dispositivo selecionado: {device}")
+
+print("Carregando o motor F5-TTS (Isso pode demorar um pouco na primeira vez)...")
+# O F5-TTS automaticamente acha a GPU e baixa os pesos necessários
+f5tts = F5TTS()
+print("Modelo carregado com sucesso!")
 
 # =======================================================================
-# CACHE DO MODELO (Evita recarregar a cada clique)
+# FUNÇÃO DE GERAÇÃO
 # =======================================================================
-@st.cache_resource(show_spinner="Carregando o motor F5-TTS (Pode demorar um pouco na primeira vez)...")
-def load_model():
-    # O F5-TTS automaticamente acha a GPU e baixa os pesos necessários
-    return F5TTS()
-
-f5tts = load_model()
-
-# =======================================================================
-# FRONT-END
-# =======================================================================
-st.title("🎙️ GenVox - F5 Studio")
-st.markdown("O seu estúdio na nuvem focado em **Clonagem de Voz Ultrarrealista**.")
-
-with st.container():
-    st.subheader("1. A Voz Original (Clone)")
-    arquivo_clone = st.file_uploader("Upload do Áudio de Referência (O ideal é de 10 a 15 segundos)", type=["wav", "mp3", "ogg"])
+def gerar_audio_f5(arquivo_clone, texto_referencia, texto):
+    if not texto or not texto.strip():
+        raise gr.Error("O roteiro não pode estar vazio. Por favor, digite o que a voz deve falar.")
+    if not arquivo_clone:
+        raise gr.Error("Por favor, faça o upload do áudio de referência para clonagem.")
     
-    texto_referencia = st.text_area(
-        "O que a pessoa diz no áudio acima? (Opcional)", 
-        placeholder="Se deixar em branco, a IA vai transcrever automaticamente para você..."
+    temp_dir = tempfile.gettempdir()
+    print("Iniciando a geração de áudio no modo Clonagem com F5-TTS...")
+    
+    try:
+        # O motor mágico do F5-TTS faz todo o trabalho duro aqui
+        wav, sr, _ = f5tts.infer(
+            ref_file=arquivo_clone, 
+            ref_text=texto_referencia.strip() if texto_referencia else "", 
+            gen_text=texto.strip()
+        )
+        
+        caminho_saida = os.path.join(temp_dir, f"saida_{uuid.uuid4()}.wav")
+        sf.write(caminho_saida, wav, sr)
+        
+        # Tratamento de áudio com Pydub (sua lógica original de estúdio)
+        audio_final = AudioSegment.from_wav(caminho_saida)
+        
+        # Escudo contra áudios vazios
+        if len(audio_final) > 0:
+            audio_final = audio_final.high_pass_filter(180)
+            audio_final = normalize(audio_final, headroom=3.0)
+            audio_final.export(caminho_saida, format="wav")
+            print("Geração concluída com sucesso!")
+            return caminho_saida
+        else:
+            raise gr.Error("O áudio gerado está vazio. Tente outro arquivo de referência.")
+            
+    except Exception as e:
+        raise gr.Error(f"Erro durante a geração: {str(e)}")
+
+# =======================================================================
+# FRONT-END (INTERFACE GRADIO)
+# =======================================================================
+with gr.Blocks(title="GenVox - F5 Studio", theme=gr.themes.Soft()) as interface:
+    gr.Markdown("# 🎙️ GenVox - F5 Studio")
+    gr.Markdown("O seu estúdio na nuvem focado em **Clonagem de Voz Ultrarrealista** usando a tecnologia F5-TTS.")
+
+    with gr.Row():
+        # Coluna da Esquerda (Configurações e Entrada)
+        with gr.Column(scale=1):
+            
+            gr.Markdown("### 1. A Voz Original (Clone)")
+            input_audio_clone = gr.Audio(
+                type="filepath", 
+                label="Upload do Áudio de Referência (O ideal é de 10 a 15 segundos)"
+            )
+            input_texto_ref = gr.Textbox(
+                label="O que a pessoa diz no áudio acima? (Opcional)", 
+                placeholder="Deixe em branco para a IA transcrever sozinha usando o Whisper..."
+            )
+            
+            gr.Markdown("### 2. O Roteiro")
+            input_texto = gr.Textbox(
+                label="Escreva o que a nova voz deverá falar:", 
+                lines=5
+            )
+
+            btn_gerar = gr.Button("🚀 CLONAR E GERAR ÁUDIO", variant="primary")
+
+        # Coluna da Direita (Saída de Áudio)
+        with gr.Column(scale=1):
+            saida_audio = gr.Audio(label="Resultado da Geração", interactive=False)
+
+    # Conecta o clique do botão à função principal
+    btn_gerar.click(
+        fn=gerar_audio_f5,
+        inputs=[input_audio_clone, input_texto_ref, input_texto],
+        outputs=saida_audio
     )
 
-st.divider()
-
-st.subheader("2. O Roteiro")
-texto = st.text_area("Escreva o que a nova voz deverá falar:", height=150)
-
-st.divider()
-
-if st.button("🚀 CLONAR E GERAR ÁUDIO", type="primary", use_container_width=True):
-    if not texto.strip():
-        st.error("⚠️ Por favor, digite o roteiro que a voz deverá falar.")
-    elif not arquivo_clone:
-        st.error("⚠️ Por favor, faça o upload do áudio que será clonado.")
-    else:
-        with st.spinner("Processando Inteligência Artificial na GPU..."):
-            temp_dir = tempfile.gettempdir()
-            caminho_ref = os.path.join(temp_dir, f"ref_{uuid.uuid4()}.wav")
-            
-            # Salva o upload temporariamente na máquina
-            with open(caminho_ref, "wb") as f:
-                f.write(arquivo_clone.getbuffer())
-                
-            try:
-                # O motor mágico do F5-TTS faz todo o trabalho duro aqui
-                wav, sr, _ = f5tts.infer(
-                    ref_file=caminho_ref, 
-                    ref_text=texto_referencia.strip(), 
-                    gen_text=texto.strip()
-                )
-                
-                caminho_saida = os.path.join(temp_dir, f"saida_{uuid.uuid4()}.wav")
-                sf.write(caminho_saida, wav, sr)
-                
-                # Tratamento de áudio com Pydub (sua lógica original de estúdio)
-                audio_final = AudioSegment.from_wav(caminho_saida)
-                if len(audio_final) > 0:
-                    audio_final = audio_final.high_pass_filter(180)
-                    audio_final = normalize(audio_final, headroom=3.0)
-                    audio_final.export(caminho_saida, format="wav")
-                    
-                    st.success("✅ Áudio clonado com perfeição!")
-                    st.audio(caminho_saida, format="audio/wav")
-                else:
-                    st.error("🚨 O áudio gerado está vazio. Tente outro arquivo de referência.")
-                    
-            except Exception as e:
-                st.error(f"Erro durante a geração: {str(e)}")
+if __name__ == "__main__":
+    # Inicia a aplicação com share=True (sem senhas, direto ao ponto!)
+    interface.launch(share=True, debug=True)
