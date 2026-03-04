@@ -37,7 +37,7 @@ caminho_modelo_br = hf_hub_download(
 )
 
 # Inicializa a máquina do F5-TTS usando o cérebro brasileiro
-f5tts = F5TTS(model_type="F5-TTS", ckpt_file=caminho_modelo_br)
+f5tts = F5TTS(ckpt_file=caminho_modelo_br)
 print("Modelo Brasileiro carregado com sucesso!")
 
 # =======================================================================
