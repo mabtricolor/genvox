@@ -21,8 +21,6 @@ def _patched_load(*args, **kwargs):
 torch.load = _patched_load
 # =======================================================================
 
-# Importa a poderosa API do F5-TTS
-# Importa a poderosa API do F5-TTS e a ferramenta de download do Hugging Face
 from f5_tts.api import F5TTS
 from huggingface_hub import hf_hub_download
 
@@ -30,18 +28,20 @@ print("Inicializando o ambiente...")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Dispositivo selecionado: {device}")
 
-print("Baixando e carregando o modelo F5-TTS 100% Brasileiro (FirstPixel)... Isso demora um pouco na primeira vez.")
+print("Baixando e carregando o modelo F5-TTS 100% Brasileiro (FirstPixel)...")
+print("Isso pode demorar um pouco na primeira execução.")
+# O arquivo safetensors fica DENTRO da pasta "pt-br" no repositório
+caminho_modelo_br = hf_hub_download(
+    repo_id="firstpixel/F5-TTS-pt-br", 
+    filename="pt-br/model_last.safetensors"
+)
 
-# 1. Baixa o arquivo "model_last.safetensors" direto do repositório PT-BR que você achou!
-caminho_modelo_br = hf_hub_download(repo_id="firstpixel/F5-TTS-pt-br", filename="model_last.safetensors")
-
-# 2. Injeta o cérebro brasileiro dentro da máquina do F5-TTS original
+# Inicializa a máquina do F5-TTS usando o cérebro brasileiro
 f5tts = F5TTS(model_type="F5-TTS", ckpt_file=caminho_modelo_br)
-
 print("Modelo Brasileiro carregado com sucesso!")
 
 # =======================================================================
-# FUNÇÃO DE GERAÇÃO
+# FUNÇÃO DE GERAÇÃO E TRATAMENTO
 # =======================================================================
 def gerar_audio_f5(arquivo_clone, texto_referencia, texto):
     if not texto or not texto.strip():
@@ -50,10 +50,10 @@ def gerar_audio_f5(arquivo_clone, texto_referencia, texto):
         raise gr.Error("Por favor, faça o upload do áudio de referência para clonagem.")
     
     temp_dir = tempfile.gettempdir()
-    print("Iniciando a geração de áudio no modo Clonagem com F5-TTS...")
+    print("Iniciando a clonagem de voz e processamento do áudio...")
     
     try:
-        # O motor mágico do F5-TTS faz todo o trabalho duro aqui
+        # A IA transcreve, clona e gera o áudio
         wav, sr, _ = f5tts.infer(
             ref_file=arquivo_clone, 
             ref_text=texto_referencia.strip() if texto_referencia else "", 
@@ -63,10 +63,10 @@ def gerar_audio_f5(arquivo_clone, texto_referencia, texto):
         caminho_saida = os.path.join(temp_dir, f"saida_{uuid.uuid4()}.wav")
         sf.write(caminho_saida, wav, sr)
         
-        # Tratamento de áudio com Pydub (sua lógica original de estúdio)
+        # O seu toque de mágica de Estúdio com Pydub
         audio_final = AudioSegment.from_wav(caminho_saida)
         
-        # Escudo contra áudios vazios
+        # Escudo contra quebra de tela (áudio vazio)
         if len(audio_final) > 0:
             audio_final = audio_final.high_pass_filter(180)
             audio_final = normalize(audio_final, headroom=3.0)
@@ -82,18 +82,17 @@ def gerar_audio_f5(arquivo_clone, texto_referencia, texto):
 # =======================================================================
 # FRONT-END (INTERFACE GRADIO)
 # =======================================================================
-with gr.Blocks(title="GenVox - F5 Studio", theme=gr.themes.Soft()) as interface:
-    gr.Markdown("# 🎙️ GenVox - F5 Studio")
-    gr.Markdown("O seu estúdio na nuvem focado em **Clonagem de Voz Ultrarrealista** usando a tecnologia F5-TTS.")
+with gr.Blocks(title="GenVox - F5 Studio BR", theme=gr.themes.Soft()) as interface:
+    gr.Markdown("# 🎙️ GenVox - F5 Studio (Edição Brasil)")
+    gr.Markdown("O seu estúdio na nuvem focado em **Clonagem de Voz Ultrarrealista** usando a tecnologia F5-TTS nativa em Português.")
 
     with gr.Row():
-        # Coluna da Esquerda (Configurações e Entrada)
         with gr.Column(scale=1):
             
             gr.Markdown("### 1. A Voz Original (Clone)")
             input_audio_clone = gr.Audio(
                 type="filepath", 
-                label="Upload do Áudio de Referência (O ideal é de 10 a 15 segundos)"
+                label="Upload do Áudio (O ideal é de 10 a 15 segundos do locutor em Português)"
             )
             input_texto_ref = gr.Textbox(
                 label="O que a pessoa diz no áudio acima? (Opcional)", 
@@ -108,11 +107,9 @@ with gr.Blocks(title="GenVox - F5 Studio", theme=gr.themes.Soft()) as interface:
 
             btn_gerar = gr.Button("🚀 CLONAR E GERAR ÁUDIO", variant="primary")
 
-        # Coluna da Direita (Saída de Áudio)
         with gr.Column(scale=1):
             saida_audio = gr.Audio(label="Resultado da Geração", interactive=False)
 
-    # Conecta o clique do botão à função principal
     btn_gerar.click(
         fn=gerar_audio_f5,
         inputs=[input_audio_clone, input_texto_ref, input_texto],
@@ -120,5 +117,4 @@ with gr.Blocks(title="GenVox - F5 Studio", theme=gr.themes.Soft()) as interface:
     )
 
 if __name__ == "__main__":
-    # Inicia a aplicação com share=True (sem senhas, direto ao ponto!)
     interface.launch(share=True, debug=True)
