@@ -1,4 +1,6 @@
 f5-tts
 gradio==4.44.1
+huggingface-hub==0.22.2
+pydantic==2.10.6
 soundfile
 pydub
