@@ -4,3 +4,4 @@ huggingface-hub==0.22.2
 pydantic==2.10.6
 soundfile
 pydub
+torchcodec
