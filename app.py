@@ -22,16 +22,23 @@ torch.load = _patched_load
 # =======================================================================
 
 # Importa a poderosa API do F5-TTS
+# Importa a poderosa API do F5-TTS e a ferramenta de download do Hugging Face
 from f5_tts.api import F5TTS
+from huggingface_hub import hf_hub_download
 
 print("Inicializando o ambiente...")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Dispositivo selecionado: {device}")
 
-print("Carregando o motor F5-TTS (Isso pode demorar um pouco na primeira vez)...")
-# O F5-TTS automaticamente acha a GPU e baixa os pesos necessários
-f5tts = F5TTS()
-print("Modelo carregado com sucesso!")
+print("Baixando e carregando o modelo F5-TTS 100% Brasileiro (FirstPixel)... Isso demora um pouco na primeira vez.")
+
+# 1. Baixa o arquivo "model_last.safetensors" direto do repositório PT-BR que você achou!
+caminho_modelo_br = hf_hub_download(repo_id="firstpixel/F5-TTS-pt-br", filename="model_last.safetensors")
+
+# 2. Injeta o cérebro brasileiro dentro da máquina do F5-TTS original
+f5tts = F5TTS(model_type="F5-TTS", ckpt_file=caminho_modelo_br)
+
+print("Modelo Brasileiro carregado com sucesso!")
 
 # =======================================================================
 # FUNÇÃO DE GERAÇÃO
